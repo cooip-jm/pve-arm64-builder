@@ -177,3 +177,8 @@ Remove outputs and logs before a clean rebuild.
 rm -rf ../out/arm64 ../logs/pve-arm64
 rm -rf ../out/riscv64 ../logs/pve-riscv64
 ```
+
+## Acknowledgements
+
+Thanks to [@YooLc](https://github.com/yoolc) for providing test hardware and
+helping promote the project.
