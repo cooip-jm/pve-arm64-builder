@@ -3,6 +3,8 @@
 echo "deb [trusted=yes arch=arm64] https://raw.githubusercontent.com/cooip-jm/pve-arm64-builder/gh-pages ./" | sudo tee /etc/apt/sources.list.d/pve-arm64.list
 ```
 # 安装需要ifupdown2
+## 宿主系统需安装
+### apt install -y qemu-user-static binfmt-support 不然有包会失败。
 这是自用测试源，会自动更新，没有使用GPG签名。
 
 # PVE ARM64/RISCV64 Builder
