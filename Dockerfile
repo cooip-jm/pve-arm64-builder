@@ -3,9 +3,9 @@ FROM --platform=linux/amd64 debian:trixie-slim
 SHELL ["/bin/bash", "-euxo", "pipefail", "-c"]
 
 ARG DEBIAN_FRONTEND=noninteractive
-ARG DEBIAN_MIRROR=http://chinanet.mirrors.ustc.edu.cn/debian
-ARG DEBIAN_SECURITY_MIRROR=http://chinanet.mirrors.ustc.edu.cn/debian-security
-ARG PROXMOX_MIRROR=https://chinanet.mirrors.ustc.edu.cn/proxmox
+ARG DEBIAN_MIRROR=http://deb.debian.org/debian
+ARG DEBIAN_SECURITY_MIRROR=http://security.debian.org/debian-security
+ARG PROXMOX_MIRROR=http://download.proxmox.com
 ARG PROXMOX_SUITE=trixie
 ARG PROXMOX_KEYRING_VERSION=4.0
 ARG INSTALL_ALL_PROXMOX_DEVEL_PACKAGES=true
