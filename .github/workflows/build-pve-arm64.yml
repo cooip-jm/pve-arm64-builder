@@ -28,7 +28,6 @@ jobs:
     env:
       TZ: Asia/Shanghai
       BUILD_ROOT: /mnt/workdir
-      PROJECT_ROOT: /mnt/workdir/pve-arm64-builder
 
     steps:
       - name: Checkout
@@ -102,12 +101,14 @@ jobs:
           RESUME_BUILT: ${{ inputs.resume_built }}
           JOBS: ${{ inputs.jobs }}
         run: |
+          set -euxo pipefail
+          SCRIPT_PATH="/workspaces/pve/pve-arm64-builder/build_pve_arm64.sh"
           if [[ -n "${ONLY_SOURCES}" ]]; then
             docker exec pve-arm64-builder bash -lc \
-              "ONLY_SOURCES='${ONLY_SOURCES}' MAX_PASSES='${MAX_PASSES}' RESUME_BUILT='${RESUME_BUILT}' JOBS='${JOBS}' REGENERATE_PLAN=1 /workspaces/pve/build_pve_arm64.sh"
+              "ONLY_SOURCES='${ONLY_SOURCES}' MAX_PASSES='${MAX_PASSES}' RESUME_BUILT='${RESUME_BUILT}' JOBS='${JOBS}' REGENERATE_PLAN=1 ${SCRIPT_PATH}"
           else
             docker exec pve-arm64-builder bash -lc \
-              "MAX_PASSES='${MAX_PASSES}' RESUME_BUILT='${RESUME_BUILT}' JOBS='${JOBS}' REGENERATE_PLAN=1 /workspaces/pve/build_pve_arm64.sh"
+              "MAX_PASSES='${MAX_PASSES}' RESUME_BUILT='${RESUME_BUILT}' JOBS='${JOBS}' REGENERATE_PLAN=1 ${SCRIPT_PATH}"
           fi
 
       - name: Prepare binary directory
