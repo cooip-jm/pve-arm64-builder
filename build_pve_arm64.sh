@@ -45,44 +45,51 @@ refresh_local_repo() {
 
     (
         cd "${OUT_DIR}" || exit 1
-                rm -rf Packages Packages.gz InRelease Release 2>/dev/null || true
-        
+        rm -f Packages Packages.gz InRelease Release 2>/dev/null || true
+        rm -rf Packages 2>/dev/null || true 
+
         if compgen -G '*.deb' >/dev/null; then
-            log "Found $(ls -1 *.deb 2>/dev/null | wc -l) .deb files, generating Packages..."
+            log "Found $(ls -1 *.deb 2>/dev/null | wc -l) .deb files"
             dpkg-scanpackages --multiversion . /dev/null > Packages
         else
             log "No .deb files yet, creating empty Packages"
             : > Packages
         fi
-        
         gzip -9c < Packages > Packages.gz
-        chmod 644 Packages Packages.gz
-        
-        log "Local repo ready: $(wc -l < Packages) packages indexed"
+        chmod a+r Packages Packages.gz
+        log "Local repo ready: $(wc -l < Packages) packages"
     )
+
     printf '%s\n' "deb [trusted=yes] file:${OUT_DIR} ./" \
         | run_root tee /etc/apt/sources.list.d/local-pve-arm64.list >/dev/null
 
-    run_root apt-get -o APT::Sandbox::User=root update || {
-        log "WARNING: apt update failed, retrying once..."
-        run_root apt-get -o APT::Sandbox::User=root update
-    }
+    run_root apt-get -o APT::Sandbox::User=root update || true
 }
 
 prepare_apt() {
     log "preparing apt and cross-build tools"
-    
     if ! dpkg --print-foreign-architectures | grep -qx "${HOST_ARCH}"; then
         run_root dpkg --add-architecture "${HOST_ARCH}"
     fi
 
     mkdir -p "${OUT_DIR}"
+    
 
     if [[ ! -f "${OUT_DIR}/Packages" ]]; then
-        refresh_local_repo
+        (
+            cd "${OUT_DIR}"
+            : > Packages
+            gzip -9c < Packages > Packages.gz
+            chmod 644 Packages Packages.gz
+        )
     fi
+
+    printf '%s\n' "deb [trusted=yes] file:${OUT_DIR} ./" \
+        | run_root tee /etc/apt/sources.list.d/local-pve-arm64.list >/dev/null
+
     run_root apt-get -o APT::Sandbox::User=root update
-    log "Installing base build dependencies..."
+
+
     run_root apt-get install -y --no-install-recommends \
         autoconf autoconf-archive automake bison cargo cmake \
         crossbuild-essential-arm64 curl dc debcargo debhelper \
@@ -94,26 +101,29 @@ prepare_apt() {
         python3 python3-pip python3-setuptools quilt rsync \
         rustc rustfmt xz-utils zstd || true
 
+    run_root apt-get install -y --no-install-recommends "python3:${BUILD_ARCH}" || true
+
+
     run_root apt-get install -y --no-install-recommends \
-        "python3:${BUILD_ARCH}" \
         "check:${HOST_ARCH}" "libapt-pkg-dev:${HOST_ARCH}" \
         libacl1-dev:${HOST_ARCH} libasound2-dev:${HOST_ARCH} \
         libcurl4-gnutls-dev:${HOST_ARCH} libepoxy-dev:${HOST_ARCH} \
         libfdt-dev:${HOST_ARCH} libfuse3-dev:${HOST_ARCH} \
         libgbm-dev:${HOST_ARCH} libglib2.0-dev:${HOST_ARCH} \
-        libiscsi-dev:${HOST_ARCH} libnetfilter-conntrack-dev:${HOST_ARCH} \
-        libnspr4-dev:${HOST_ARCH} libnss3-dev:${HOST_ARCH} \
-        libnuma-dev:${HOST_ARCH} libpam0g-dev:${HOST_ARCH} \
-        liburing-dev:${HOST_ARCH} libvirglrenderer-dev:${HOST_ARCH} \
-        librrd-dev:${HOST_ARCH} libsasl2-dev:${HOST_ARCH} \
-        libslirp-dev:${HOST_ARCH} libsnappy-dev:${HOST_ARCH} \
-        libssl-dev:${HOST_ARCH} libsqlite3-dev:${HOST_ARCH} \
-        libsnmp-dev:${HOST_ARCH} libsystemd-dev:${HOST_ARCH} \
-        libudev-dev:${HOST_ARCH} libusb-1.0-0-dev:${HOST_ARCH} || true
+        libiscsi-dev:${HOST_ARCH} libnspr4-dev:${HOST_ARCH} \
+        libnss3-dev:${HOST_ARCH} libnuma-dev:${HOST_ARCH} \
+        libpam0g-dev:${HOST_ARCH} liburing-dev:${HOST_ARCH} \
+        libvirglrenderer-dev:${HOST_ARCH} librrd-dev:${HOST_ARCH} \
+        libsasl2-dev:${HOST_ARCH} libslirp-dev:${HOST_ARCH} \
+        libsnappy-dev:${HOST_ARCH} libssl-dev:${HOST_ARCH} \
+        libsqlite3-dev:${HOST_ARCH} libsnmp-dev:${HOST_ARCH} \
+        libsystemd-dev:${HOST_ARCH} libudev-dev:${HOST_ARCH} \
+        libusb-1.0-0-dev:${HOST_ARCH} || true
 
+    # Rust
     if [[ ! -x "${HOME}/.cargo/bin/rustup" ]]; then
         log "installing rustup..."
-        curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal
+        curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal || true
     fi
     export CARGO_HOME="${HOME}/.cargo"
     export RUSTUP_HOME="${HOME}/.rustup"
@@ -121,13 +131,13 @@ prepare_apt() {
     rustup toolchain install stable --profile minimal --target aarch64-unknown-linux-gnu --target wasm32-unknown-unknown || true
     rustup default stable || true
 
+
     log "Relaxing strict version dependencies..."
     find "${SRC_DIR}" -path "*/debian/control" -exec sed -i 's/ (= / (>= /g' {} + 2>/dev/null || true
     find "${SRC_DIR}" -path "*/debian/control" -exec sed -i 's/ (== / (>= /g' {} + 2>/dev/null || true
 
     refresh_local_repo
 }
-
 source_to_repo() {
     case "$1" in
         corosync) printf '%s\n' corosync-pve ;;
