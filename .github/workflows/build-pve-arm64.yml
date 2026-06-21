@@ -4,33 +4,38 @@ on:
   workflow_dispatch:
     inputs:
       only_sources:
-        description: '只构建指定包（逗号或空格分隔，留空=全部）'
+        description: "只构建指定包（逗号或空格分隔，留空=全部）"
         required: false
-        default: ''
+        default: ""
       max_passes:
-        description: '最大重试次数'
+        description: "最大重试次数"
         required: false
-        default: '4'
+        default: "4"
       resume_built:
-        description: '复用已构建包 (1=是 0=否)'
+        description: "复用已构建包 (1=是 0=否)"
         required: false
-        default: '1'
+        default: "1"
       jobs:
-        description: '并行数 (推荐 2)'
+        description: "并行任务数 (推荐 2)"
         required: false
-        default: '2'
+        default: "2"
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      TZ: Asia/Shanghai
+      BUILD_ROOT: /mnt/workdir
+      PROJECT_ROOT: /mnt/workdir/pve-arm64-builder
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Initialize environment & Cleanup
+      - name: Initialize environment & Heavy Cleanup
+        shell: bash
         run: |
           set -euxo pipefail
           docker system prune -a -f || true
@@ -39,71 +44,114 @@ jobs:
           sudo apt-get purge -y azure-cli ghc* zulu* llvm* firefox google* dotnet* openjdk* || true
           sudo apt-get autoremove -y --purge && sudo apt-get clean
 
-      - name: Free more disk space
-        uses: jlumbroso/free-disk-space@main
-        with:
-          tool-cache: false
-          android: true
-          large-packages: true
-          docker-images: true
+      - name: Create simulated physical disk (关键大空间)
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mnt_size=$(($(df --output=avail -BG /mnt | tail -1 | tr -dc '0-9') - 1))
+          root_size=$(($(df --output=avail -BG / | tail -1 | tr -dc '0-9') - 4))
+          if (( mnt_size < 1 )); then mnt_size=1; fi
+          if (( root_size < 1 )); then root_size=1; fi
+          sudo truncate -s "${mnt_size}G" /mnt/mnt.img
+          sudo truncate -s "${root_size}G" /root.img
+          LOOP_MNT=$(sudo losetup -f --show /mnt/mnt.img)
+          LOOP_ROOT=$(sudo losetup -f --show /root.img)
+          sudo pvcreate "${LOOP_MNT}"
+          sudo pvcreate "${LOOP_ROOT}"
+          sudo vgcreate -y github "${LOOP_MNT}" "${LOOP_ROOT}"
+          sudo lvcreate -n runner -l 100%FREE github
+          sudo mkfs.xfs /dev/github/runner
+          sudo mkdir -p "${BUILD_ROOT}"
+          sudo mount /dev/github/runner "${BUILD_ROOT}"
+          sudo chown -R "${USER}:${USER}" "${BUILD_ROOT}"
+
+      - name: Relocate Docker data root
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo systemctl stop docker
+          sudo rm -rf /var/lib/docker
+          sudo mkdir -p "${BUILD_ROOT}/docker"
+          printf '{\n  "data-root": "%s/docker"\n}\n' "${BUILD_ROOT}" | sudo tee /etc/docker/daemon.json
+          sudo systemctl start docker
+          docker info | grep 'Docker Root Dir'
+
+      - name: Prepare workspace layout
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p "${BUILD_ROOT}/src" "${BUILD_ROOT}/out/arm64" "${BUILD_ROOT}/logs/pve-arm64"
 
       - name: Build Docker image
-        run: docker build -t pve-arm64-builder:trixie .
-
-      - name: Run build
+        shell: bash
         run: |
-          mkdir -p out/arm64 logs
-          docker run --rm \
-            --user root \
-            -v ${{ github.workspace }}:/workspaces/pve \
-            -w /workspaces/pve \
-            -e OUT_DIR=/workspaces/pve/out/arm64 \
-            -e LOG_DIR=/workspaces/pve/logs \
-            -e REGENERATE_PLAN=1 \
-            -e RESUME_BUILT=${{ inputs.resume_built }} \
-            -e MAX_PASSES=${{ inputs.max_passes }} \
-            -e JOBS=${{ inputs.jobs }} \
-            -e ONLY_SOURCES="${{ inputs.only_sources }}" \
-            -e INSTALL_ALL_PROXMOX_DEVEL_PACKAGES=true \
-            pve-arm64-builder:trixie \
-            bash -lc '/workspaces/pve/build_pve_arm64.sh'
+          set -euxo pipefail
+          docker build -t pve-arm64-builder:trixie .
 
-      - name: Prepare binary directory
+      - name: Start builder container (关键持久容器)
+        shell: bash
+        run: |
+          set -euxo pipefail
+          docker rm -f pve-arm64-builder 2>/dev/null || true
+          docker run -d --name pve-arm64-builder \
+            --user 0:0 \
+            -v "${BUILD_ROOT}:/workspaces/pve" \
+            -w /workspaces/pve \
+            pve-arm64-builder:trixie \
+            sleep infinity
+
+      - name: Build arm64 packages
+        shell: bash
+        env:
+          ONLY_SOURCES: ${{ inputs.only_sources || '' }}
+          MAX_PASSES: ${{ inputs.max_passes || '4' }}
+          RESUME_BUILT: ${{ inputs.resume_built || '1' }}
+          JOBS: ${{ inputs.jobs || '2' }}
+        run: |
+          set -euxo pipefail
+          if [[ -n "${ONLY_SOURCES}" ]]; then
+            docker exec pve-arm64-builder bash -lc \
+              "ONLY_SOURCES='${ONLY_SOURCES}' MAX_PASSES='${MAX_PASSES}' RESUME_BUILT='${RESUME_BUILT}' JOBS='${JOBS}' REGENERATE_PLAN=1 /workspaces/pve/build_pve_arm64.sh"
+          else
+            docker exec pve-arm64-builder bash -lc \
+              "MAX_PASSES='${MAX_PASSES}' RESUME_BUILT='${RESUME_BUILT}' JOBS='${JOBS}' REGENERATE_PLAN=1 /workspaces/pve/build_pve_arm64.sh"
+          fi
+
+      - name: Prepare binary directory for gh-pages
+        shell: bash
         run: |
           mkdir -p binary-arm64
-          cp -r out/arm64/*.deb binary-arm64/ 2>/dev/null || true
-          cp out/arm64/Packages* binary-arm64/ 2>/dev/null || true
+          cp -r "${BUILD_ROOT}/out/arm64"/*.deb binary-arm64/ 2>/dev/null || true
+          cp "${BUILD_ROOT}/out/arm64"/Packages* binary-arm64/ 2>/dev/null || true
           cp README.md binary-arm64/README.md 2>/dev/null || true
 
-      - name: Generate GPG key and sign repo
+      - name: Generate GPG key and sign repository
+        shell: bash
         run: |
           cat > /tmp/gpg-batch <<EOF
-          %echo Generating key
+          %echo Generating a basic OpenPGP key
           Key-Type: RSA
           Key-Length: 4096
           Subkey-Type: RSA
           Subkey-Length: 4096
           Name-Real: PVE arm64 Builder (fzdy-zz)
           Name-Comment: Auto-generated
-          Name-Email: pve-arm64@users.noreply.github.com
+          Name-Email: pve-arm64-builder@users.noreply.github.com
           Expire-Date: 0
           %no-protection
           %commit
           %echo done
           EOF
-
           gpg --batch --gen-key /tmp/gpg-batch
           KEYID=$(gpg --list-keys --keyid-format=long | grep -oP '(?<=/)[0-9A-F]{16}' | head -n1)
-
           cd binary-arm64
           apt-ftparchive release . > Release
           gpg --default-key $KEYID --armor --detach-sign -o Release.gpg Release
           gpg --default-key $KEYID --clearsign -o InRelease Release
           gpg --armor --export $KEYID > pve-arm64-builder-pubkey.asc
+          echo "✅ GPG Key ID: $KEYID"
 
-          echo "✅ Signed with key: $KEYID"
-
-      - name: Deploy to gh-pages
+      - name: Deploy to gh-pages branch
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
