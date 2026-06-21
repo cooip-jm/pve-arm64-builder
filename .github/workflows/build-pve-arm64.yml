@@ -14,7 +14,7 @@ on:
       resume_built:
         description: "复用已构建包 (1=是 0=否)"
         required: false
-        default: "1"
+        default: "0"
       jobs:
         description: "并行任务数 (推荐 2)"
         required: false
@@ -74,10 +74,12 @@ jobs:
           printf '{\n  "data-root": "%s/docker"\n}\n' "${BUILD_ROOT}" | sudo tee /etc/docker/daemon.json
           sudo systemctl start docker
 
-      - name: Prepare workspace layout
+      - name: Prepare workspace layout (关键挂载)
         shell: bash
         run: |
-          mkdir -p "${BUILD_ROOT}/src" "${BUILD_ROOT}/out/arm64" "${BUILD_ROOT}/logs/pve-arm64"
+          mkdir -p "${BUILD_ROOT}/pve-arm64-builder"
+          cp -r . "${BUILD_ROOT}/pve-arm64-builder/"
+          mkdir -p "${BUILD_ROOT}/out/arm64" "${BUILD_ROOT}/logs/pve-arm64"
 
       - name: Build Docker image
         run: docker build -t pve-arm64-builder:trixie .
@@ -103,6 +105,8 @@ jobs:
         run: |
           set -euxo pipefail
           SCRIPT_PATH="/workspaces/pve/pve-arm64-builder/build_pve_arm64.sh"
+          echo "Using script path: $SCRIPT_PATH"
+          ls -la "$SCRIPT_PATH" || echo "Script not found at expected path"
           if [[ -n "${ONLY_SOURCES}" ]]; then
             docker exec pve-arm64-builder bash -lc \
               "ONLY_SOURCES='${ONLY_SOURCES}' MAX_PASSES='${MAX_PASSES}' RESUME_BUILT='${RESUME_BUILT}' JOBS='${JOBS}' REGENERATE_PLAN=1 ${SCRIPT_PATH}"
