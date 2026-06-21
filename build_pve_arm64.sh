@@ -39,31 +39,20 @@ if ! flock -n 9; then
 fi
 
 refresh_local_repo() {
-    log "Refreshing local repository at ${OUT_DIR}..."
-
     prune_excluded_binary_artifacts
-
     (
-        cd "${OUT_DIR}" || exit 1
-        rm -f Packages Packages.gz InRelease Release 2>/dev/null || true
-        rm -rf Packages 2>/dev/null || true 
-
+        cd "${OUT_DIR}"
         if compgen -G '*.deb' >/dev/null; then
-            log "Found $(ls -1 *.deb 2>/dev/null | wc -l) .deb files"
             dpkg-scanpackages --multiversion . /dev/null > Packages
         else
-            log "No .deb files yet, creating empty Packages"
             : > Packages
         fi
         gzip -9c < Packages > Packages.gz
         chmod a+r Packages Packages.gz
-        log "Local repo ready: $(wc -l < Packages) packages"
     )
-
     printf '%s\n' "deb [trusted=yes] file:${OUT_DIR} ./" \
         | run_root tee /etc/apt/sources.list.d/local-pve-arm64.list >/dev/null
-
-    run_root apt-get -o APT::Sandbox::User=root update || true
+    run_root apt-get -o APT::Sandbox::User=root update
 }
 
 prepare_apt() {
@@ -72,72 +61,130 @@ prepare_apt() {
         run_root dpkg --add-architecture "${HOST_ARCH}"
     fi
 
-    mkdir -p "${OUT_DIR}"
-    
-
     if [[ ! -f "${OUT_DIR}/Packages" ]]; then
-        (
-            cd "${OUT_DIR}"
-            : > Packages
-            gzip -9c < Packages > Packages.gz
-            chmod 644 Packages Packages.gz
-        )
+        : > "${OUT_DIR}/Packages"
+        gzip -9c < "${OUT_DIR}/Packages" > "${OUT_DIR}/Packages.gz"
+        chmod a+r "${OUT_DIR}/Packages" "${OUT_DIR}/Packages.gz"
     fi
-
     printf '%s\n' "deb [trusted=yes] file:${OUT_DIR} ./" \
         | run_root tee /etc/apt/sources.list.d/local-pve-arm64.list >/dev/null
 
     run_root apt-get -o APT::Sandbox::User=root update
-
+    run_root apt-get install -y --no-install-recommends \
+        autoconf \
+        autoconf-archive \
+        automake \
+        bison \
+        cargo \
+        cmake \
+        crossbuild-essential-arm64 \
+        curl \
+        dc \
+        debcargo \
+        debhelper \
+        devscripts \
+        dh-python \
+        docbook2x \
+        doxygen \
+        doxygen2man \
+        dpkg-dev \
+        equivs \
+        fakeroot \
+        flex \
+        g++-aarch64-linux-gnu \
+        gcc-aarch64-linux-gnu \
+        git \
+        graphviz \
+        jq \
+        librust-cidr-dev \
+        librust-crossbeam-channel-dev \
+        librust-pam-sys-dev \
+        librust-pathpatterns-dev \
+        librust-proxmox-docgen-dev \
+        librust-proxmox-ldap-dev \
+        librust-proxmox-metrics-dev \
+        librust-proxmox-openid-dev \
+        librust-proxmox-parallel-handler-dev \
+        librust-proxmox-rest-server-dev \
+        librust-proxmox-rrd-dev \
+        librust-proxmox-upgrade-checks-dev \
+        librust-pxar-dev \
+        librust-udev-dev \
+        librust-xdg-dev \
+        python3-sphinx \
+        python3-sphinx-rtd-theme \
+        python3-venv \
+        lz4 \
+        meson \
+        ninja-build \
+        pkgconf \
+        proxmox-wasm-builder \
+        python3 \
+        python3-pip \
+        python3-pip-whl \
+        python3-pycotap \
+        python3-setuptools \
+        python3-wheel \
+        python3-wheel-whl \
+        quilt \
+        rsync \
+        rustc \
+        rustfmt \
+        xz-utils \
+        zstd
 
     run_root apt-get install -y --no-install-recommends \
-        autoconf autoconf-archive automake bison cargo cmake \
-        crossbuild-essential-arm64 curl dc debcargo debhelper \
-        devscripts dh-python docbook2x doxygen doxygen2man \
-        dpkg-dev equivs fakeroot flex g++-aarch64-linux-gnu \
-        gcc-aarch64-linux-gnu git graphviz jq \
-        python3-sphinx python3-sphinx-rtd-theme python3-venv \
-        lz4 meson ninja-build pkgconf proxmox-wasm-builder \
-        python3 python3-pip python3-setuptools quilt rsync \
-        rustc rustfmt xz-utils zstd || true
-
-    run_root apt-get install -y --no-install-recommends "python3:${BUILD_ARCH}" || true
-
+        "python3:${BUILD_ARCH}"
 
     run_root apt-get install -y --no-install-recommends \
-        "check:${HOST_ARCH}" "libapt-pkg-dev:${HOST_ARCH}" \
-        libacl1-dev:${HOST_ARCH} libasound2-dev:${HOST_ARCH} \
-        libcurl4-gnutls-dev:${HOST_ARCH} libepoxy-dev:${HOST_ARCH} \
-        libfdt-dev:${HOST_ARCH} libfuse3-dev:${HOST_ARCH} \
-        libgbm-dev:${HOST_ARCH} libglib2.0-dev:${HOST_ARCH} \
-        libiscsi-dev:${HOST_ARCH} libnspr4-dev:${HOST_ARCH} \
-        libnss3-dev:${HOST_ARCH} libnuma-dev:${HOST_ARCH} \
-        libpam0g-dev:${HOST_ARCH} liburing-dev:${HOST_ARCH} \
-        libvirglrenderer-dev:${HOST_ARCH} librrd-dev:${HOST_ARCH} \
-        libsasl2-dev:${HOST_ARCH} libslirp-dev:${HOST_ARCH} \
-        libsnappy-dev:${HOST_ARCH} libssl-dev:${HOST_ARCH} \
-        libsqlite3-dev:${HOST_ARCH} libsnmp-dev:${HOST_ARCH} \
-        libsystemd-dev:${HOST_ARCH} libudev-dev:${HOST_ARCH} \
-        libusb-1.0-0-dev:${HOST_ARCH} || true
+        "check:${HOST_ARCH}" \
+        "libapt-pkg-dev:${HOST_ARCH}" \
+        "libacl1-dev:${HOST_ARCH}" \
+        "libasound2-dev:${HOST_ARCH}" \
+        "libcurl4-gnutls-dev:${HOST_ARCH}" \
+        "libepoxy-dev:${HOST_ARCH}" \
+        "libfdt-dev:${HOST_ARCH}" \
+        "libfuse3-dev:${HOST_ARCH}" \
+        "libgbm-dev:${HOST_ARCH}" \
+        "libglib2.0-dev:${HOST_ARCH}" \
+        "libiscsi-dev:${HOST_ARCH}" \
+        "libnetfilter-conntrack-dev:${HOST_ARCH}" \
+        "libnetfilter-log-dev:${HOST_ARCH}" \
+        "libnspr4-dev:${HOST_ARCH}" \
+        "libnss3-dev:${HOST_ARCH}" \
+        "libnuma-dev:${HOST_ARCH}" \
+        "libpam0g-dev:${HOST_ARCH}" \
+        "liburing-dev:${HOST_ARCH}" \
+        "libvirglrenderer-dev:${HOST_ARCH}" \
+        "librrd-dev:${HOST_ARCH}" \
+        "libsasl2-dev:${HOST_ARCH}" \
+        "libsgutils2-dev:${HOST_ARCH}" \
+        "libslirp-dev:${HOST_ARCH}" \
+        "libsnappy-dev:${HOST_ARCH}" \
+        "libssl-dev:${HOST_ARCH}" \
+        "libsqlite3-dev:${HOST_ARCH}" \
+        "libsnmp-dev:${HOST_ARCH}" \
+        "libsystemd-dev:${HOST_ARCH}" \
+        "libudev-dev:${HOST_ARCH}" \
+        "libusb-1.0-0-dev:${HOST_ARCH}" \
+        "libusbredirparser-dev:${HOST_ARCH}" \
+        "libxkbcommon-dev:${HOST_ARCH}" \
+        "libyang-dev:${HOST_ARCH}"
 
-    # Rust
     if [[ ! -x "${HOME}/.cargo/bin/rustup" ]]; then
-        log "installing rustup..."
-        curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal || true
+        log "installing rustup for the aarch64 Rust target"
+        curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal
     fi
     export CARGO_HOME="${HOME}/.cargo"
     export RUSTUP_HOME="${HOME}/.rustup"
     export PATH="${CARGO_HOME}/bin:${PATH}"
-    rustup toolchain install stable --profile minimal --target aarch64-unknown-linux-gnu --target wasm32-unknown-unknown || true
-    rustup default stable || true
-
-
-    log "Relaxing strict version dependencies..."
-    find "${SRC_DIR}" -path "*/debian/control" -exec sed -i 's/ (= / (>= /g' {} + 2>/dev/null || true
-    find "${SRC_DIR}" -path "*/debian/control" -exec sed -i 's/ (== / (>= /g' {} + 2>/dev/null || true
+    rustup toolchain install stable --profile minimal --target aarch64-unknown-linux-gnu --target wasm32-unknown-unknown
+    rustup component add rustfmt --toolchain stable
+    rustup default stable
 
     refresh_local_repo
 }
+
 source_to_repo() {
     case "$1" in
         corosync) printf '%s\n' corosync-pve ;;
