@@ -4,8 +4,8 @@ set -Eeuo pipefail
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 ROOT=${ROOT:-$(dirname "${SCRIPT_DIR}")}
 SRC_DIR=${SRC_DIR:-${ROOT}/src}
-OUT_DIR=${OUT_DIR:-${ROOT}/out/arm64}
-LOG_DIR=${LOG_DIR:-${ROOT}/logs/pve-arm64}
+OUT_DIR=${OUT_DIR:-${ROOT}/out/riscv64}
+LOG_DIR=${LOG_DIR:-${ROOT}/logs/pve-riscv64}
 PLAN_FILE=${PLAN_FILE:-${SCRIPT_DIR}/pve-source-plan.txt}
 PLAN_SCRIPT=${PLAN_SCRIPT:-${SCRIPT_DIR}/plan_pve_sources.py}
 RELAX_DEPS_SCRIPT=${RELAX_DEPS_SCRIPT:-${SCRIPT_DIR}/relax_pve_dependencies.py}
@@ -13,7 +13,7 @@ PATCH_DIR=${PATCH_DIR:-${SCRIPT_DIR}/patches}
 MAX_PASSES=${MAX_PASSES:-4}
 JOBS=${JOBS:-$(nproc)}
 BUILD_ARCH=${BUILD_ARCH:-amd64}
-HOST_ARCH=${HOST_ARCH:-arm64}
+HOST_ARCH=${HOST_ARCH:-riscv64}
 PROXMOX_GIT_BASE=${PROXMOX_GIT_BASE:-https://git.proxmox.com/git}
 
 if [[ "$(id -u)" == 0 ]]; then
@@ -30,11 +30,25 @@ run_root() {
     "${SUDO[@]}" "$@"
 }
 
+cleanup_installed_build_dep_packages() {
+    local packages=()
+    mapfile -t packages < <(
+        dpkg-query -W -f='${binary:Package}\n' 2>/dev/null \
+            | grep -E -- '-(cross-)?build-deps-depends(:|$)' \
+            || true
+    )
+
+    if ((${#packages[@]})); then
+        log "removing stale mk-build-deps packages: ${packages[*]}"
+        run_root dpkg --purge --force-depends "${packages[@]}" || true
+    fi
+}
+
 mkdir -p "${SRC_DIR}" "${OUT_DIR}" "${LOG_DIR}"
 
-exec 9>"${ROOT}/.pve-arm64-build.lock"
+exec 9>"${ROOT}/.pve-riscv64-build.lock"
 if ! flock -n 9; then
-    log "another pve arm64 build is already running"
+    log "another pve riscv64 build is already running"
     exit 1
 fi
 
@@ -51,8 +65,21 @@ refresh_local_repo() {
         chmod a+r Packages Packages.gz
     )
     printf '%s\n' "deb [trusted=yes] file:${OUT_DIR} ./" \
-        | run_root tee /etc/apt/sources.list.d/local-pve-arm64.list >/dev/null
+        | run_root tee /etc/apt/sources.list.d/local-pve-riscv64.list >/dev/null
     run_root apt-get -o APT::Sandbox::User=root update
+}
+
+restrict_proxmox_devel_to_native_arch() {
+    local source="/etc/apt/sources.list.d/proxmox-devel.sources"
+
+    [[ -f "${source}" ]] || return 0
+    grep -q 'proxmox.*/debian/devel' "${source}" || return 0
+
+    if grep -q '^Architectures:' "${source}"; then
+        run_root sed -i 's/^Architectures:.*/Architectures: amd64/' "${source}"
+    else
+        printf '%s\n' 'Architectures: amd64' | run_root tee -a "${source}" >/dev/null
+    fi
 }
 
 prepare_apt() {
@@ -60,6 +87,8 @@ prepare_apt() {
     if ! dpkg --print-foreign-architectures | grep -qx "${HOST_ARCH}"; then
         run_root dpkg --add-architecture "${HOST_ARCH}"
     fi
+    restrict_proxmox_devel_to_native_arch
+    cleanup_installed_build_dep_packages
 
     if [[ ! -f "${OUT_DIR}/Packages" ]]; then
         : > "${OUT_DIR}/Packages"
@@ -67,7 +96,7 @@ prepare_apt() {
         chmod a+r "${OUT_DIR}/Packages" "${OUT_DIR}/Packages.gz"
     fi
     printf '%s\n' "deb [trusted=yes] file:${OUT_DIR} ./" \
-        | run_root tee /etc/apt/sources.list.d/local-pve-arm64.list >/dev/null
+        | run_root tee /etc/apt/sources.list.d/local-pve-riscv64.list >/dev/null
 
     run_root apt-get -o APT::Sandbox::User=root update
     run_root apt-get install -y --no-install-recommends \
@@ -77,7 +106,7 @@ prepare_apt() {
         bison \
         cargo \
         cmake \
-        crossbuild-essential-arm64 \
+        crossbuild-essential-riscv64 \
         curl \
         dc \
         debcargo \
@@ -91,8 +120,8 @@ prepare_apt() {
         equivs \
         fakeroot \
         flex \
-        g++-aarch64-linux-gnu \
-        gcc-aarch64-linux-gnu \
+        g++-riscv64-linux-gnu \
+        gcc-riscv64-linux-gnu \
         git \
         graphviz \
         jq \
@@ -172,13 +201,13 @@ prepare_apt() {
         "libyang-dev:${HOST_ARCH}"
 
     if [[ ! -x "${HOME}/.cargo/bin/rustup" ]]; then
-        log "installing rustup for the aarch64 Rust target"
+        log "installing rustup for the riscv64 Rust target"
         curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal
     fi
     export CARGO_HOME="${HOME}/.cargo"
     export RUSTUP_HOME="${HOME}/.rustup"
     export PATH="${CARGO_HOME}/bin:${PATH}"
-    rustup toolchain install stable --profile minimal --target aarch64-unknown-linux-gnu --target wasm32-unknown-unknown
+    rustup toolchain install stable --profile minimal --target riscv64gc-unknown-linux-gnu --target wasm32-unknown-unknown
     rustup component add rustfmt --toolchain stable
     rustup default stable
 
@@ -893,6 +922,17 @@ relax_pve_manager_rados_dependency() {
     fi
 }
 
+remove_debian_binary_stanza() {
+    local control=$1
+    local package=$2
+
+    PACKAGE_TO_REMOVE="${package}" perl -0pi -e '
+        my $package = quotemeta($ENV{PACKAGE_TO_REMOVE});
+        s/\nPackage: $package\n.*?(?=\nPackage: |\z)/\n/s;
+        s/^Package: $package\n.*?(?=\nPackage: |\z)//s;
+    ' "${control}"
+}
+
 append_unique_line() {
     local file=$1
     local line=$2
@@ -926,24 +966,24 @@ apply_source_fixes() {
         if [[ -f "${makefile}" ]]; then
             sed -i \
                 -e 's#^ARCH := $(DEB_BUILD_ARCH)$#ARCH := $(DEB_HOST_ARCH)#' \
-                -e 's#^TARGET_DIR=release$#TARGET_DIR=aarch64-unknown-linux-gnu/release#' \
-                -e 's#^TARGET_DIR=debug$#TARGET_DIR=aarch64-unknown-linux-gnu/debug#' \
-                -e 's#^TARGETDIR := target/release$#TARGETDIR := target/aarch64-unknown-linux-gnu/release#' \
-                -e 's#^TARGETDIR := target/debug$#TARGETDIR := target/aarch64-unknown-linux-gnu/debug#' \
-                -e 's#^COMPILEDIR := target/release$#COMPILEDIR := target/aarch64-unknown-linux-gnu/release#' \
-                -e 's#^COMPILEDIR := target/debug$#COMPILEDIR := target/aarch64-unknown-linux-gnu/debug#' \
+                -e 's#^TARGET_DIR=release$#TARGET_DIR=riscv64gc-unknown-linux-gnu/release#' \
+                -e 's#^TARGET_DIR=debug$#TARGET_DIR=riscv64gc-unknown-linux-gnu/debug#' \
+                -e 's#^TARGETDIR := target/release$#TARGETDIR := target/riscv64gc-unknown-linux-gnu/release#' \
+                -e 's#^TARGETDIR := target/debug$#TARGETDIR := target/riscv64gc-unknown-linux-gnu/debug#' \
+                -e 's#^COMPILEDIR := target/release$#COMPILEDIR := target/riscv64gc-unknown-linux-gnu/release#' \
+                -e 's#^COMPILEDIR := target/debug$#COMPILEDIR := target/riscv64gc-unknown-linux-gnu/debug#' \
                 -e 's#target/release/#target/$(TARGET_DIR)/#g' \
                 "${makefile}"
         fi
         if [[ -f "${makefile}" ]] && grep -q 'cargo build .*$(CARGO_BUILD_ARGS)' "${makefile}"; then
-            sed -i 's#cargo build .*$(CARGO_BUILD_ARGS)#cargo --config '\''build.rustflags=["-C","debuginfo=2","-C","strip=none","--cap-lints","warn"]'\'' build --target aarch64-unknown-linux-gnu $(CARGO_BUILD_ARGS)#g' "${makefile}"
+            sed -i 's#cargo build .*$(CARGO_BUILD_ARGS)#cargo --config '\''build.rustflags=["-C","debuginfo=2","-C","strip=none","--cap-lints","warn"]'\'' build --target riscv64gc-unknown-linux-gnu $(CARGO_BUILD_ARGS)#g' "${makefile}"
             sed -i \
-                -e 's#^TARGET_DIR=release$#TARGET_DIR=aarch64-unknown-linux-gnu/release#' \
-                -e 's#^TARGET_DIR=debug$#TARGET_DIR=aarch64-unknown-linux-gnu/debug#' \
-                -e 's#^TARGETDIR := target/release$#TARGETDIR := target/aarch64-unknown-linux-gnu/release#' \
-                -e 's#^TARGETDIR := target/debug$#TARGETDIR := target/aarch64-unknown-linux-gnu/debug#' \
-                -e 's#^COMPILEDIR := target/release$#COMPILEDIR := target/aarch64-unknown-linux-gnu/release#' \
-                -e 's#^COMPILEDIR := target/debug$#COMPILEDIR := target/aarch64-unknown-linux-gnu/debug#' \
+                -e 's#^TARGET_DIR=release$#TARGET_DIR=riscv64gc-unknown-linux-gnu/release#' \
+                -e 's#^TARGET_DIR=debug$#TARGET_DIR=riscv64gc-unknown-linux-gnu/debug#' \
+                -e 's#^TARGETDIR := target/release$#TARGETDIR := target/riscv64gc-unknown-linux-gnu/release#' \
+                -e 's#^TARGETDIR := target/debug$#TARGETDIR := target/riscv64gc-unknown-linux-gnu/debug#' \
+                -e 's#^COMPILEDIR := target/release$#COMPILEDIR := target/riscv64gc-unknown-linux-gnu/release#' \
+                -e 's#^COMPILEDIR := target/debug$#COMPILEDIR := target/riscv64gc-unknown-linux-gnu/debug#' \
                 -e 's#target/release/#target/$(TARGET_DIR)/#g' \
                 "${makefile}"
         fi
@@ -1145,6 +1185,12 @@ apply_source_fixes() {
                     qmeventd.8
                 sed -i 's/pkgconf --/$(PKG_CONFIG) --/g' "${dir}/src/qmeventd/Makefile"
             fi
+            local qmc_makefile
+            for qmc_makefile in "${dir}/query-machine-capabilities/Makefile" "${dir}/src/query-machine-capabilities/Makefile"; do
+                if [[ -f "${qmc_makefile}" ]]; then
+                    sed -i 's/-Werror /-Werror -Wno-string-compare /' "${qmc_makefile}"
+                fi
+            done
             ;;
         pve-docs)
             if [[ -f "${dir}/Makefile" ]]; then
@@ -1193,7 +1239,7 @@ apply_source_fixes() {
                 native_qualify_rust_build_deps "${dir}/debian/control"
             fi
             if [[ -f "${dir}/debian/proxmox-firewall.install" ]]; then
-                sed -i 's#target/x86_64-unknown-linux-gnu/release/#target/aarch64-unknown-linux-gnu/release/#g' "${dir}/debian/proxmox-firewall.install"
+                sed -i 's#target/x86_64-unknown-linux-gnu/release/#target/riscv64gc-unknown-linux-gnu/release/#g' "${dir}/debian/proxmox-firewall.install"
             fi
             ;;
         pve-cluster)
@@ -1300,6 +1346,22 @@ apply_source_fixes() {
                 perl -0pi -e 's/^\s*librust-cidr-0\.3\+default-dev(?::native)?[^\n]*,\n//mg' "${dir}/debian/control"
                 perl -0pi -e 's/^\s*librust-proxmox-rest-server-1\+(?:rate-limited-stream|templates)-dev(?::native)?[^\n]*,\n//mg' "${dir}/debian/control"
                 perl -0pi -e 's/^\s*texlive-(?:fonts-extra|fonts-recommended|xetex)[^\n]*,\n//mg' "${dir}/debian/control"
+                remove_debian_binary_stanza "${dir}/debian/control" proxmox-backup-client-static
+                rm -f "${dir}"/debian/proxmox-backup-client-static.*
+            fi
+            if [[ -f "${dir}/Makefile" ]]; then
+                perl -0pi -e '
+                    s/^all:\s+proxmox-backup-client-static\s+\$\(SUBDIRS\)$/all: \$(SUBDIRS)/m;
+                    s/\$\(RESTORE_DEB\) \$\(RESTORE_DBG_DEB\) \$\(STATIC_CLIENT_DEB\) \$\(STATIC_CLIENT_DBG_DEB\)/\$(RESTORE_DEB) \$(RESTORE_DBG_DEB)/;
+                    s/^install:\s+\$\(COMPILED_BINS\)\s+\$\(STATIC_BINS\)$/install: \$(COMPILED_BINS)/m;
+                    s/^\tinstall -m755 \$\(STATIC_COMPILEDIR\)\/proxmox-backup-client \$\(DESTDIR\)\$\(BINDIR\)\/proxmox-backup-client-static\n//m;
+                    s/^\tinstall -m755 \$\(STATIC_COMPILEDIR\)\/pxar \$\(DESTDIR\)\$\(BINDIR\)\/pxar-static\n//m;
+                ' "${dir}/Makefile"
+            fi
+            if [[ -f "${dir}/debian/rules" ]]; then
+                perl -0pi -e '
+                    s/\n\tmkdir -p debian\/proxmox-backup-client-static\/usr\/bin\n\tmv debian\/tmp\/usr\/bin\/proxmox-backup-client-static debian\/proxmox-backup-client-static\/usr\/bin\/proxmox-backup-client\n\tmv debian\/tmp\/usr\/bin\/pxar-static debian\/proxmox-backup-client-static\/usr\/bin\/pxar\n/\n/s;
+                ' "${dir}/debian/rules"
             fi
             if [[ -f "${dir}/debian/rules" ]] && ! grep -q 'cidr-.*debian/cargo_registry' "${dir}/debian/rules"; then
                 sed -i '/prepare-debian/a\
@@ -1386,7 +1448,7 @@ apply_source_fixes() {
             fi
             ;;
         swtpm)
-            export PKG_CONFIG_PATH="/usr/lib/${HOST_ARCH/arm64/aarch64-linux-gnu}/pkgconfig:/usr/share/pkgconfig:${PKG_CONFIG_PATH:-}"
+            export PKG_CONFIG_PATH="/usr/lib/${HOST_ARCH/riscv64/riscv64-linux-gnu}/pkgconfig:/usr/share/pkgconfig:${PKG_CONFIG_PATH:-}"
             ;;
     esac
 }
@@ -1401,15 +1463,13 @@ build_with_env() {
         export DEB_BUILD_PROFILES="${DEB_BUILD_PROFILES:-nocheck cross}"
         export DEB_BUILD_ARCH="${BUILD_ARCH}"
         export DEB_HOST_ARCH="${HOST_ARCH}"
-        export DEB_HOST_GNU_TYPE="aarch64-linux-gnu"
-        export DEB_HOST_MULTIARCH="aarch64-linux-gnu"
-        export DEB_CFLAGS_MAINT_STRIP="-mbranch-protection=standard ${DEB_CFLAGS_MAINT_STRIP:-}"
-        export DEB_CXXFLAGS_MAINT_STRIP="-mbranch-protection=standard ${DEB_CXXFLAGS_MAINT_STRIP:-}"
-        export CC="aarch64-linux-gnu-gcc"
-        export CXX="aarch64-linux-gnu-g++"
-        export PKG_CONFIG="aarch64-linux-gnu-pkg-config"
+        export DEB_HOST_GNU_TYPE="riscv64-linux-gnu"
+        export DEB_HOST_MULTIARCH="riscv64-linux-gnu"
+        export CC="riscv64-linux-gnu-gcc"
+        export CXX="riscv64-linux-gnu-g++"
+        export PKG_CONFIG="riscv64-linux-gnu-pkg-config"
         export PKG_CONFIG_ALLOW_CROSS=1
-        export PKG_CONFIG_PATH="/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig:${PKG_CONFIG_PATH:-}"
+        export PKG_CONFIG_PATH="/usr/lib/riscv64-linux-gnu/pkgconfig:/usr/share/pkgconfig:${PKG_CONFIG_PATH:-}"
         export HOST_CC="gcc"
         export HOST_CXX="g++"
         export HOST_PKG_CONFIG="pkg-config"
@@ -1424,20 +1484,20 @@ build_with_env() {
         export PKG_CONFIG_x86_64_unknown_linux_gnu="pkg-config"
         export PKG_CONFIG_PATH_x86_64_unknown_linux_gnu="/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig"
         export PKG_CONFIG_LIBDIR_x86_64_unknown_linux_gnu="/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig"
-        export CC_aarch64_unknown_linux_gnu="aarch64-linux-gnu-gcc"
-        export CXX_aarch64_unknown_linux_gnu="aarch64-linux-gnu-g++"
-        export AR_aarch64_unknown_linux_gnu="aarch64-linux-gnu-ar"
-        export PKG_CONFIG_aarch64_unknown_linux_gnu="aarch64-linux-gnu-pkg-config"
-        export PKG_CONFIG_PATH_aarch64_unknown_linux_gnu="/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig"
-        export PKG_CONFIG_LIBDIR_aarch64_unknown_linux_gnu="/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig"
+        export CC_riscv64gc_unknown_linux_gnu="riscv64-linux-gnu-gcc"
+        export CXX_riscv64gc_unknown_linux_gnu="riscv64-linux-gnu-g++"
+        export AR_riscv64gc_unknown_linux_gnu="riscv64-linux-gnu-ar"
+        export PKG_CONFIG_riscv64gc_unknown_linux_gnu="riscv64-linux-gnu-pkg-config"
+        export PKG_CONFIG_PATH_riscv64gc_unknown_linux_gnu="/usr/lib/riscv64-linux-gnu/pkgconfig:/usr/share/pkgconfig"
+        export PKG_CONFIG_LIBDIR_riscv64gc_unknown_linux_gnu="/usr/lib/riscv64-linux-gnu/pkgconfig:/usr/share/pkgconfig"
         export OPENSSL_NO_VENDOR=1
         export CARGO_HOME="${HOME}/.cargo"
         export RUSTUP_HOME="${HOME}/.rustup"
         export RUSTUP_TOOLCHAIN=stable
         export PATH="${CARGO_HOME}/bin:${PATH}"
-        export CARGO_BUILD_TARGET=aarch64-unknown-linux-gnu
-        export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
-        export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_AR=aarch64-linux-gnu-ar
+        export CARGO_BUILD_TARGET=riscv64gc-unknown-linux-gnu
+        export CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_GNU_LINKER=riscv64-linux-gnu-gcc
+        export CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_GNU_AR=riscv64-linux-gnu-ar
         "$@"
     )
 }
