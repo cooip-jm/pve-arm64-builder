@@ -4,21 +4,21 @@ on:
   workflow_dispatch:
     inputs:
       only_sources:
-        description: '只构建指定源码包（逗号分隔，留空=全部）'
+        description: '只构建指定包（逗号或空格分隔，留空=全部）'
         required: false
         default: ''
       max_passes:
-        description: '最大构建重试次数'
+        description: '最大重试次数'
         required: false
         default: '4'
       resume_built:
-        description: '复用已构建包 (1=是, 0=否)'
+        description: '复用已构建包 (1=是 0=否)'
         required: false
         default: '1'
       jobs:
-        description: '并行任务数（推荐 2-4）'
+        description: '并行数 (推荐 2)'
         required: false
-        default: '3'
+        default: '2'
 
 jobs:
   build:
@@ -27,29 +27,30 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Free Disk Space
+      - name: Initialize environment & Cleanup
+        run: |
+          set -euxo pipefail
+          docker system prune -a -f || true
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/hostedtoolcache || true
+          sudo swapoff -a || true
+          sudo apt-get purge -y azure-cli ghc* zulu* llvm* firefox google* dotnet* openjdk* || true
+          sudo apt-get autoremove -y --purge && sudo apt-get clean
+
+      - name: Free more disk space
         uses: jlumbroso/free-disk-space@main
         with:
           tool-cache: false
           android: true
-          dotnet: true
-          haskell: true
           large-packages: true
           docker-images: true
-          swap-storage: true
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build Docker builder image
+      - name: Build Docker image
         run: docker build -t pve-arm64-builder:trixie .
 
-      - name: Run PVE arm64 build
+      - name: Run build
         run: |
           mkdir -p out/arm64 logs
           docker run --rm \
@@ -74,18 +75,17 @@ jobs:
           cp out/arm64/Packages* binary-arm64/ 2>/dev/null || true
           cp README.md binary-arm64/README.md 2>/dev/null || true
 
-      # === GPG 签名（无需 Secrets）===
-      - name: Generate GPG key and sign repository
+      - name: Generate GPG key and sign repo
         run: |
           cat > /tmp/gpg-batch <<EOF
-          %echo Generating a basic OpenPGP key
+          %echo Generating key
           Key-Type: RSA
           Key-Length: 4096
           Subkey-Type: RSA
           Subkey-Length: 4096
           Name-Real: PVE arm64 Builder (fzdy-zz)
           Name-Comment: Auto-generated
-          Name-Email: pve-arm64-builder@users.noreply.github.com
+          Name-Email: pve-arm64@users.noreply.github.com
           Expire-Date: 0
           %no-protection
           %commit
@@ -97,14 +97,13 @@ jobs:
 
           cd binary-arm64
           apt-ftparchive release . > Release
-
           gpg --default-key $KEYID --armor --detach-sign -o Release.gpg Release
           gpg --default-key $KEYID --clearsign -o InRelease Release
           gpg --armor --export $KEYID > pve-arm64-builder-pubkey.asc
 
-          echo "GPG Key ID: $KEYID"
+          echo "✅ Signed with key: $KEYID"
 
-      - name: Deploy to gh-pages branch
+      - name: Deploy to gh-pages
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -112,16 +111,12 @@ jobs:
           publish_branch: gh-pages
           force_orphan: true
 
-      # === 修复后的 master commit 步骤（带 pull --rebase）===
-      - name: Commit artifacts to master (optional)
+      - name: Commit artifacts to master
         if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          
-          # 安全 pull + rebase
-          git pull --rebase origin master || echo "Pull failed, continuing anyway"
-          
+          git pull --rebase origin master || true
           git add out/arm64/ logs/ binary-arm64/ || true
-          git commit -m "chore: update arm64 build + GPG signature $(date -u +%Y-%m-%d)" || echo "No changes to commit"
-          git push origin master || echo "Push to master failed (non-blocking)"
+          git commit -m "chore: update arm64 build $(date -u +%Y-%m-%d)" || echo "No changes"
+          git push origin master || true
