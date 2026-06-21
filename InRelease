@@ -1,0 +1,36 @@
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA512
+
+Date: Sun, 21 Jun 2026 11:49:48 +0000
+MD5Sum:
+ d41d8cd98f00b204e9800998ecf8427e                0 Packages
+ de6b02db9abe4a41d0ec7e53aac15f32               20 Packages.gz
+ 9fa51aed4332e879dbe2ce3a2cb66c62               38 Release
+SHA1:
+ da39a3ee5e6b4b0d3255bfef95601890afd80709                0 Packages
+ 2b1e52ceae158472fbd337f1e706b8f5cf8e1e15               20 Packages.gz
+ f525ce2345b7f6de863728af89e09fa6d737ce77               38 Release
+SHA256:
+ e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855                0 Packages
+ 112aeae80a15c2aee409402bf85eca770450f8ed6eb2d5f48e5d1ed09a51d4c7               20 Packages.gz
+ a4cdee0be9b6c495289217cebab7bdc7ac000fde78638df96596371df371c573               38 Release
+SHA512:
+ cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e                0 Packages
+ d5a6960b52ae216771a0f95600c7b0c43b6afca61b7d481efcfb2400f595d39c74d7a8a7a70396af9a8e53201b3d4a8a4cc95a7db76bfa0dfc13dc962567c0eb               20 Packages.gz
+ 49d4d294f54931957835ce75a31caf24e2552fc289362f437429e54a6a0e20ba51b9b93218b62b93de6f1594dc7c3d0d5339ced162b1cea880ab099cc6359a5e               38 Release
+-----BEGIN PGP SIGNATURE-----
+
+iQIzBAEBCgAdFiEEbwj2d2a0bMWz6abck9xU2kxtpYsFAmo3z9wACgkQk9xU2kxt
+pYu3zxAAopYJPT0ghwkQmi2wwEvfK4eRMlSHFv/a8FekXPoCvdfFXXte67WvEIzE
++Jtt+WUlwSiRVovLUomwtHR3nzHH4hfuYXtk1z0n6nj6vtEtcFh6UUts+XzBesOV
+ErQYhQYd00ANpxYMdravMNcOSA9T0IpktriM6+0fFzfSuFP7gqSNZPUwHZvxzzVq
+Yn/6QUxJKmZRp8/IbCB5bPWLPxaHYqSElE6Dz8nd4IznN9Euh/BVUvVbl2qNhmEX
+UfNEyPv6TelrLFGwIQe5vcUWJz/YlR0vwpUIscwS3JfzWGu0fnpMesLwSogdQfXI
+PFPPBLc7aBwjH7KZw1pvcU43AQB+y9mziW70pZbPR6fIn1NxWnRD9J9EwYOVj8/+
+hNeCXJdc29C6ZbBQUBEhOAR8oUnD8G3Iw9BxwxPUjXkv4IjyZpY9YIFN8Wgs4HDP
+iORDGzhZkQprfIWbx4nYwn4TKnOrawOgN/J6OGI9N9KTOJ7jP+dVK/zD1wGNXJNx
+u8zKPPD+5KhtcZM+PDYB/qqWZ7aKiK+xjQCyE6p874+Tr0wK2Ez7IJ6FMHN2QPRU
+ib28778K0H02xpm5am97/nsBn57ez3dehTtSB9/1H/KP0g4mrx+LHjEFm/3VDz79
+OxcYgp+phhVhHMcYeuX+d8zKT21S4CjMT3fH8u3KXdYT0Y7QYxM=
+=YTQm
+-----END PGP SIGNATURE-----
