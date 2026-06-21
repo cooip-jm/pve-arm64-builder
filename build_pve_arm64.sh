@@ -56,82 +56,39 @@ refresh_local_repo() {
 }
 
 prepare_apt() {
-    log "preparing apt and cross-build tools"
+log "preparing apt and cross-build tools"
     if ! dpkg --print-foreign-architectures | grep -qx "${HOST_ARCH}"; then
         run_root dpkg --add-architecture "${HOST_ARCH}"
     fi
 
-    if [[ ! -f "${OUT_DIR}/Packages" ]]; then
-        : > "${OUT_DIR}/Packages"
-        gzip -9c < "${OUT_DIR}/Packages" > "${OUT_DIR}/Packages.gz"
-        chmod a+r "${OUT_DIR}/Packages" "${OUT_DIR}/Packages.gz"
-    fi
+    mkdir -p "${OUT_DIR}"
+    (
+        cd "${OUT_DIR}" || exit 1
+        rm -rf Packages Packages.gz InRelease Release 2>/dev/null || true
+        : > Packages
+        gzip -9c < Packages > Packages.gz
+        chmod 644 Packages Packages.gz
+        log "Initialized empty local repo with $(ls -1 *.deb 2>/dev/null | wc -l) existing .deb files"
+    )
+
     printf '%s\n' "deb [trusted=yes] file:${OUT_DIR} ./" \
         | run_root tee /etc/apt/sources.list.d/local-pve-arm64.list >/dev/null
 
-    run_root apt-get -o APT::Sandbox::User=root update
+    run_root apt-get -o APT::Sandbox::User=root update || {
+        log "WARNING: First apt update failed, retrying..."
+        run_root apt-get -o APT::Sandbox::User=root update
+    }
+
     run_root apt-get install -y --no-install-recommends \
-        autoconf \
-        autoconf-archive \
-        automake \
-        bison \
-        cargo \
-        cmake \
-        crossbuild-essential-arm64 \
-        curl \
-        dc \
-        debcargo \
-        debhelper \
-        devscripts \
-        dh-python \
-        docbook2x \
-        doxygen \
-        doxygen2man \
-        dpkg-dev \
-        equivs \
-        fakeroot \
-        flex \
-        g++-aarch64-linux-gnu \
-        gcc-aarch64-linux-gnu \
-        git \
-        graphviz \
-        jq \
-        librust-cidr-dev \
-        librust-crossbeam-channel-dev \
-        librust-pam-sys-dev \
-        librust-pathpatterns-dev \
-        librust-proxmox-docgen-dev \
-        librust-proxmox-ldap-dev \
-        librust-proxmox-metrics-dev \
-        librust-proxmox-openid-dev \
-        librust-proxmox-parallel-handler-dev \
-        librust-proxmox-rest-server-dev \
-        librust-proxmox-rrd-dev \
-        librust-proxmox-upgrade-checks-dev \
-        librust-pxar-dev \
-        librust-udev-dev \
-        librust-xdg-dev \
-        python3-sphinx \
-        python3-sphinx-rtd-theme \
-        python3-venv \
-        lz4 \
-        meson \
-        ninja-build \
-        pkgconf \
-        proxmox-wasm-builder \
-        python3 \
-        python3-pip \
-        python3-pip-whl \
-        python3-pycotap \
-        python3-setuptools \
-        python3-wheel \
-        python3-wheel-whl \
-        quilt \
-        rsync \
-        rustc \
-        rustfmt \
-        xz-utils \
-        zstd
+        autoconf autoconf-archive automake bison cargo cmake \
+        crossbuild-essential-arm64 curl dc debcargo debhelper \
+        devscripts dh-python docbook2x doxygen doxygen2man \
+        dpkg-dev equivs fakeroot flex g++-aarch64-linux-gnu \
+        gcc-aarch64-linux-gnu git graphviz jq \
+        librust-*-dev python3-sphinx python3-sphinx-rtd-theme \
+        python3-venv lz4 meson ninja-build pkgconf \
+        proxmox-wasm-builder python3 python3-pip python3-setuptools \
+        quilt rsync rustc rustfmt xz-utils zstd
 
     run_root apt-get install -y --no-install-recommends \
         "python3:${BUILD_ARCH}"
