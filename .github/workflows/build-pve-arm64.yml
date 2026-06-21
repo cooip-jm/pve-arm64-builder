@@ -44,7 +44,7 @@ jobs:
           sudo apt-get purge -y azure-cli ghc* zulu* llvm* firefox google* dotnet* openjdk* || true
           sudo apt-get autoremove -y --purge && sudo apt-get clean
 
-      - name: Create simulated physical disk (关键大空间)
+      - name: Create simulated physical disk
         shell: bash
         run: |
           set -euxo pipefail
@@ -74,24 +74,18 @@ jobs:
           sudo mkdir -p "${BUILD_ROOT}/docker"
           printf '{\n  "data-root": "%s/docker"\n}\n' "${BUILD_ROOT}" | sudo tee /etc/docker/daemon.json
           sudo systemctl start docker
-          docker info | grep 'Docker Root Dir'
 
       - name: Prepare workspace layout
         shell: bash
         run: |
-          set -euxo pipefail
           mkdir -p "${BUILD_ROOT}/src" "${BUILD_ROOT}/out/arm64" "${BUILD_ROOT}/logs/pve-arm64"
 
       - name: Build Docker image
-        shell: bash
-        run: |
-          set -euxo pipefail
-          docker build -t pve-arm64-builder:trixie .
+        run: docker build -t pve-arm64-builder:trixie .
 
-      - name: Start builder container (关键持久容器)
+      - name: Start builder container
         shell: bash
         run: |
-          set -euxo pipefail
           docker rm -f pve-arm64-builder 2>/dev/null || true
           docker run -d --name pve-arm64-builder \
             --user 0:0 \
@@ -103,12 +97,11 @@ jobs:
       - name: Build arm64 packages
         shell: bash
         env:
-          ONLY_SOURCES: ${{ inputs.only_sources || '' }}
-          MAX_PASSES: ${{ inputs.max_passes || '4' }}
-          RESUME_BUILT: ${{ inputs.resume_built || '1' }}
-          JOBS: ${{ inputs.jobs || '2' }}
+          ONLY_SOURCES: ${{ inputs.only_sources }}
+          MAX_PASSES: ${{ inputs.max_passes }}
+          RESUME_BUILT: ${{ inputs.resume_built }}
+          JOBS: ${{ inputs.jobs }}
         run: |
-          set -euxo pipefail
           if [[ -n "${ONLY_SOURCES}" ]]; then
             docker exec pve-arm64-builder bash -lc \
               "ONLY_SOURCES='${ONLY_SOURCES}' MAX_PASSES='${MAX_PASSES}' RESUME_BUILT='${RESUME_BUILT}' JOBS='${JOBS}' REGENERATE_PLAN=1 /workspaces/pve/build_pve_arm64.sh"
@@ -117,8 +110,7 @@ jobs:
               "MAX_PASSES='${MAX_PASSES}' RESUME_BUILT='${RESUME_BUILT}' JOBS='${JOBS}' REGENERATE_PLAN=1 /workspaces/pve/build_pve_arm64.sh"
           fi
 
-      - name: Prepare binary directory for gh-pages
-        shell: bash
+      - name: Prepare binary directory
         run: |
           mkdir -p binary-arm64
           cp -r "${BUILD_ROOT}/out/arm64"/*.deb binary-arm64/ 2>/dev/null || true
@@ -126,7 +118,6 @@ jobs:
           cp README.md binary-arm64/README.md 2>/dev/null || true
 
       - name: Generate GPG key and sign repository
-        shell: bash
         run: |
           cat > /tmp/gpg-batch <<EOF
           %echo Generating a basic OpenPGP key
@@ -149,7 +140,6 @@ jobs:
           gpg --default-key $KEYID --armor --detach-sign -o Release.gpg Release
           gpg --default-key $KEYID --clearsign -o InRelease Release
           gpg --armor --export $KEYID > pve-arm64-builder-pubkey.asc
-          echo "✅ GPG Key ID: $KEYID"
 
       - name: Deploy to gh-pages branch
         uses: peaceiris/actions-gh-pages@v4
@@ -158,13 +148,3 @@ jobs:
           publish_dir: ./binary-arm64
           publish_branch: gh-pages
           force_orphan: true
-
-      - name: Commit artifacts to master
-        if: always()
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git pull --rebase origin master || true
-          git add out/arm64/ logs/ binary-arm64/ || true
-          git commit -m "chore: update arm64 build $(date -u +%Y-%m-%d)" || echo "No changes"
-          git push origin master || true
